@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <GenerateDependencyFile>true</GenerateDependencyFile>
+    <OutputPath>bin/</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="fixtures/icon.png" LogicalName="Checks.Icon.png" />
+    <Compile Include="../src/Api/*.cs" Link="Api/%(Filename)%(Extension)" />
+    <Reference Include="BepInEx.Core" HintPath="$(GamePath)/BepInEx/core/BepInEx.Core.dll" />
+  </ItemGroup>
+</Project>
