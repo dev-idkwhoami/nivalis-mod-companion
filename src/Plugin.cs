@@ -1,4 +1,5 @@
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
@@ -16,7 +17,12 @@ public sealed class Plugin : BasePlugin
         Logger = Log;
         MenuTrace.Write("=== Mod Companion compact binding rows build 7 loaded ===");
         SettingsRegistry.Report = message => Log.LogWarning(message);
-        DeveloperModeSetting = Config.Bind("Menu", "DeveloperMode", false, "Show developer settings and test actions for registered mods.");
+        var configPath = Path.Combine(Paths.ConfigPath, "Mod Companion.cfg");
+        // Preserve existing settings; an explicitly named file takes precedence.
+        if (!File.Exists(configPath) && File.Exists(Config.ConfigFilePath))
+            File.Move(Config.ConfigFilePath, configPath);
+        var config = new ConfigFile(configPath, false, MetadataHelper.GetMetadata(this));
+        DeveloperModeSetting = config.Bind("Menu", "DeveloperMode", false, "Show developer settings and test actions for registered mods.");
         SettingsRegistry.DeveloperMode = DeveloperModeSetting.Value;
         DeveloperModeSetting.SettingChanged += (_, _) => SettingsRegistry.DeveloperMode = DeveloperModeSetting.Value;
         CompanionInput.Initialize();
@@ -24,11 +30,11 @@ public sealed class Plugin : BasePlugin
         AddComponent<CompanionMenu>();
         CompanionMenu.MenuAction = new UnityEngine.InputSystem.InputAction("OpenModCompanion",
             UnityEngine.InputSystem.InputActionType.Button,
-            Config.Bind("Menu", "Keyboard", "<Keyboard>/f5", "Open the Mod Companion browser.").Value);
+            config.Bind("Menu", "Keyboard", "<Keyboard>/f5", "Open the Mod Companion browser.").Value);
         UnityEngine.InputSystem.InputActionSetupExtensions.AddBinding(CompanionMenu.MenuAction,
-            Config.Bind("Menu", "Gamepad", "", "Optional controller binding path for opening Mod Companion.").Value);
+            config.Bind("Menu", "Gamepad", "", "Optional controller binding path for opening Mod Companion.").Value);
         CompanionMenu.MenuAction.Enable();
-        if (Config.Bind("Development", "ShowExample", false, "Register a sample mod covering every control. Restart to apply.").Value)
+        if (config.Bind("Development", "ShowExample", false, "Register a sample mod covering every control. Restart to apply.").Value)
             ExampleSettings.Register();
         Log.LogInfo($"Mod Companion {SettingsRegistry.PluginVersion} loaded. F5 or native Settings > Mod Companion.");
     }
