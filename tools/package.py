@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Package only Companion-owned release files; never game references or configs."""
+"""Package only the plugin DLL in its installation directory structure."""
 from pathlib import Path
 import hashlib
+import os
 import re
 import xml.etree.ElementTree as ET
 import zipfile
@@ -17,11 +18,11 @@ dll = root / "bin/Nivalis.ModCompanion.dll"
 if not dll.is_file():
     raise SystemExit("Build the project before packaging")
 files = [(dll, "BepInEx/plugins/Nivalis.ModCompanion.dll")]
-files += [(root / name, name) for name in ("README.md", "LICENSE")]
-files += [(p, p.relative_to(root).as_posix()) for p in sorted((root / "docs").glob("*.md"))]
-dist = root / "dist"
-dist.mkdir(exist_ok=True)
-archive = dist / f"ModCompanion-{version}.zip"
+output = Path(os.environ.get("PACKAGE_DIR", "bin"))
+if not output.is_absolute():
+    output = root / output
+output.mkdir(parents=True, exist_ok=True)
+archive = output / f"Nivalis.ModCompanion-{version}.zip"
 with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as package:
     for source, name in files:
         package.write(source, name)

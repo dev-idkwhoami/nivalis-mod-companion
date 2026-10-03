@@ -2,7 +2,11 @@
 
 A shared settings menu and public configuration API for **Nivalis Nights** mods, built on the game's native UI and BepInEx 6 Unity IL2CPP.
 
-**Version: 1.0.0.**
+**Version: 1.0.1.**
+
+The native Settings entry is attached when that panel opens. Companion does not
+scan loaded objects on a timer while playing; input-device navigation changes
+are handled by the native navigation callback.
 
 ## Integration
 

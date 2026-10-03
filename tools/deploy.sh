@@ -39,7 +39,7 @@ draft="$(gh api --paginate "repos/$repo/releases" --jq ".[] | select(.tag_name =
 
 make package
 [[ -z "$(git status --porcelain)" && "$(git rev-parse HEAD)" == "$head" ]] || fail 'Source changed during the build; refusing to publish.'
-archive="$root/dist/ModCompanion-$RELEASE_TAG.zip"
+archive="$(cd "${PACKAGE_DIR:-bin}" && pwd)/Nivalis.ModCompanion-$RELEASE_TAG.zip"
 checksum="$archive.sha256"
 (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" > "$(basename "$checksum")")
 

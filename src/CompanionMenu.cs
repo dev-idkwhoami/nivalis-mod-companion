@@ -31,7 +31,7 @@ public sealed partial class CompanionMenu : MonoBehaviour
     private ModSection? _section;
     private int _hostPage;
     private int _revision = -1;
-    private float _nextScan, _nextRefresh, _nextSave;
+    private float _nextRefresh, _nextSave;
     private SettingsPanel? _returnTo;
     private int _showFrame = -1, _returnFrame = -1;
     private bool _wasVisible;
@@ -57,12 +57,6 @@ public sealed partial class CompanionMenu : MonoBehaviour
             _nextSave = Time.unscaledTime + 1;
             foreach (var mod in SettingsRegistry.RegisteredMods)
                 if (mod.IsDirty) mod.Save();
-        }
-        if (Time.unscaledTime >= _nextScan)
-        {
-            _nextScan = Time.unscaledTime + 2;
-            foreach (var settings in Resources.FindObjectsOfTypeAll<SettingsPanel>())
-                if (settings != null && settings.gameObject.scene.IsValid() && settings.name != RootName) AddEntryButton(settings);
         }
         if (_returnFrame >= 0 && Time.frameCount >= _returnFrame)
         {
@@ -145,8 +139,9 @@ public sealed partial class CompanionMenu : MonoBehaviour
     }
 
     [HideFromIl2Cpp]
-    private void AddEntryButton(SettingsPanel settings)
+    internal void AddEntryButton(SettingsPanel settings)
     {
+        if (settings == null || settings.name == RootName || !settings.gameObject.scene.IsValid()) return;
         var wrapper = settings.transform.Find("FrameWrapper/GameplaySettings/ButtonsWrapper");
         if (wrapper == null) return;
         if (wrapper.Find("ModCompanion.Open") != null) { NativeNavigation.LinkEntry(settings); return; }
@@ -280,7 +275,10 @@ public sealed partial class CompanionMenu : MonoBehaviour
                 if (button != null) button.onClick = new Button.ButtonClickedEvent();
             _panel._startVisible = false;
             _panel.requiresMouse = _panel.pauseTimeWhenOpen = _panel.pauseTimeCompletely = true;
-            _panel.closeWithCancel = _panel.closeWithPause = true;
+            // Native MenuControls/Pause includes O, which must not close Companion.
+            // Escape and controller Back are handled by Cancel; F5 uses MenuAction.
+            _panel.closeWithCancel = true;
+            _panel.closeWithPause = false;
             _panel.firstSelected = controller.toggles[0].gameObject;
             var title = root.transform.Find("FrameWrapper/P_Element_TitleFrame/Title");
             foreach (var localized in title.GetComponents<LocalizedStaticUILabel>()) Object.DestroyImmediate(localized);
