@@ -10,7 +10,7 @@ public sealed record ModMetadata(string Name, string Author, string Version, str
 public static class SettingsRegistry
 {
     public const string PluginId = "local.nivalis.modcompanion";
-    public const string PluginVersion = "1.0.1";
+    public const string PluginVersion = "1.0.2";
     private static readonly List<ModRegistration> Mods = new();
     public static IReadOnlyList<ModRegistration> RegisteredMods => Mods.AsReadOnly();
     internal static string ConfigRoot = Paths.ConfigPath;
