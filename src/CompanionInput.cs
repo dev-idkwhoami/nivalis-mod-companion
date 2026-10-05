@@ -18,7 +18,11 @@ public static class CompanionInput
 
     internal static void Initialize()
     {
-        PlayerInputManager.OnRebindStarted += (Il2CppSystem.Action)(() => Rebinding = true);
+        PlayerInputManager.OnRebindStarted += (Il2CppSystem.Action)(() =>
+        {
+            Rebinding = true;
+            CompanionMenu.Instance?.UpdateRebindingLock();
+        });
         PlayerInputManager.OnRebindComplete += (Il2CppSystem.Action)(() => { Capture(); End(); });
         PlayerInputManager.OnRebindCanceled += (Il2CppSystem.Action)End;
     }

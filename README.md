@@ -27,6 +27,13 @@ var enabled = features.Toggle("Enabled", "Enable feature", true);
 
 Start with the [integration guide](docs/getting-started.md). The [documentation index](docs/README.md) covers the full API, controls, developer actions, metadata, icons, existing configs and storage behavior.
 
+## Development version
+
+Use the next patch version after the latest release tag for all work toward the
+next release. Keep that version unchanged across fixes, builds and local installs
+until it is tagged; only then advance to the next patch version. Keep the project
+version and `SettingsRegistry.PluginVersion` aligned.
+
 ## License
 
 Licensed under [MIT](LICENSE). This is an unofficial mod and is not affiliated with the game's developers.

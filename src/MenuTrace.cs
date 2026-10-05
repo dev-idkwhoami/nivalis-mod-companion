@@ -47,6 +47,8 @@ internal static class TraceMenuLifecycle
         yield return AccessTools.Method(typeof(InputRebindUI), nameof(InputRebindUI.OnEnable));
         yield return AccessTools.Method(typeof(SettingsPanel), nameof(SettingsPanel.Show));
         yield return AccessTools.Method(typeof(SettingsPanel), nameof(SettingsPanel.Hide));
+        yield return AccessTools.Method(typeof(UIPanel), nameof(UIPanel.Show));
+        yield return AccessTools.Method(typeof(UIPanel), nameof(UIPanel.Hide));
     }
 
     [HarmonyPrefix]

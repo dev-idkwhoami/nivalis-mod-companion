@@ -33,16 +33,16 @@ public sealed partial class CompanionMenu
         var frame = _panel!.transform.Find("FrameWrapper").GetComponent<RectTransform>();
         frame.anchorMin = new Vector2(.07f, .035f); frame.anchorMax = new Vector2(.93f, .85f);
         frame.offsetMin = frame.offsetMax = Vector2.zero;
-        // The original controller remains the lifecycle host for the complete Controls panel.
+        // The native tab controller only switches our pages; Companion owns the window lifecycle.
         // Its four implementation tabs are replaced visually by our two navigation rows.
-        var nativeTabs = _panel.togglesGroup.GetComponent<RectTransform>();
+        var nativeTabs = _pages!.GetComponent<RectTransform>();
         nativeTabs.anchoredPosition = new Vector2(0, -10000);
-        foreach (var tab in _panel.togglesGroup.toggles) tab.interactable = false;
+        foreach (var tab in _pages!.toggles) tab.interactable = false;
         _title = frame.Find("P_Element_TitleFrame/Title").GetComponent<TMP_Text>();
         var titleFrame = _title.transform.parent.GetComponent<RectTransform>();
         titleFrame.anchorMin = new Vector2(.15f, 1); titleFrame.anchorMax = new Vector2(.85f, 1);
         titleFrame.sizeDelta = new Vector2(0, 45); titleFrame.anchoredPosition = new Vector2(0, -25);
-        foreach (var page in _panel.togglesGroup.panels)
+        foreach (var page in _pages!.panels)
         {
             var rect = page.GetComponent<RectTransform>();
             rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one;
@@ -71,7 +71,7 @@ public sealed partial class CompanionMenu
         ConfigureLayout(_details.content);
         CreateBrowserSearch(overview.parent);
         overview.offsetMax = new Vector2(-20, -58);
-        _panel.togglesGroup.panels[0].GetComponent<RectTransform>().offsetMax = new Vector2(-25, -62);
+        _pages!.panels[0].GetComponent<RectTransform>().offsetMax = new Vector2(-25, -62);
         var controlsRect = _controls!.scroll.GetComponent<RectTransform>();
         controlsRect.anchorMin = new Vector2(.20f, 0); controlsRect.anchorMax = new Vector2(.80f, 1);
         controlsRect.offsetMin = new Vector2(20, 10); controlsRect.offsetMax = new Vector2(-20, -85);
@@ -185,13 +185,20 @@ public sealed partial class CompanionMenu
     private Sprite? LoadIcon(ModRegistration mod)
     {
         if (mod.Icon == null && string.IsNullOrWhiteSpace(mod.IconPath)) return null;
-        if (_icons.TryGetValue(mod.Id, out var existing)) return existing;
+        if (_icons.TryGetValue(mod.Id, out var existing))
+        {
+            if (existing != null && existing.texture != null) return existing;
+            // A managed cache entry can outlive its Unity asset after a save switch.
+            if (existing != null) Object.Destroy(existing);
+            _icons.Remove(mod.Id);
+        }
         Texture2D? texture = null;
         try
         {
-            texture = new Texture2D(2, 2);
+            texture = new Texture2D(2, 2) { hideFlags = HideFlags.DontUnloadUnusedAsset };
             if (!ImageConversion.LoadImage(texture, mod.Icon?.Data ?? File.ReadAllBytes(mod.IconPath!))) throw new IOException("Unsupported image.");
             var sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(.5f, .5f));
+            sprite.hideFlags = HideFlags.DontUnloadUnusedAsset;
             _icons.Add(mod.Id, sprite);
             return sprite;
         }
@@ -298,10 +305,10 @@ public sealed partial class CompanionMenu
         ResetScroll(_scrolls[_hostPage]);
         _layoutTraceFrames = 2;
         _lastSelection = null;
-        foreach (var host in _panel!.togglesGroup.panels) host.firstSelected = ActiveTab.gameObject;
-        if (_panel.gameObject.activeInHierarchy && _panel.IsVisible)
+        foreach (var host in _pages!.panels) host.firstSelected = ActiveTab.gameObject;
+        if (_panel!.gameObject.activeInHierarchy && _panel.IsVisible)
         {
-            _panel.togglesGroup.SwitchToPanel(_hostPage);
+            _pages!.SwitchToPanel(_hostPage);
             ActiveTab.Select();
         }
         ConfigureNavigation();

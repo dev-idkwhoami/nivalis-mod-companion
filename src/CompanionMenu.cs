@@ -20,7 +20,9 @@ public sealed partial class CompanionMenu : MonoBehaviour
 {
     internal const string RootName = "ModCompanion.Settings";
     internal static CompanionMenu? Instance;
-    private SettingsPanel? _panel;
+    private UIPanel? _panel;
+    private Nivalis.UI.InGameMenu.WindowToggleController? _pages;
+    private RebindConfirmationUI[] _rebindConfirmations = Array.Empty<RebindConfirmationUI>();
     private GameObject? _templates;
     private GameObject? _toggleTemplate, _stepTemplate, _sliderTemplate, _buttonTemplate, _bindingTemplate;
     private TMP_Text? _font;
@@ -46,6 +48,8 @@ public sealed partial class CompanionMenu : MonoBehaviour
     [HideFromIl2Cpp]
     private void Tick()
     {
+        if (!_constructionFailed && _panel == null && _templates != null)
+            ResetWindow();
         // Rebuild outside native button/event dispatch; destroying its sender in
         // a Unity callback can leave the native event system holding a dead object.
         if (_pendingUiChange != null && !CompanionInput.Rebinding)
@@ -69,13 +73,14 @@ public sealed partial class CompanionMenu : MonoBehaviour
             _showFrame = -1;
             if (_panel != null)
             {
-                MenuTrace.Write("Deferred show: calling native SettingsPanel.Show");
+                MenuTrace.Write("Deferred show: opening independent Companion panel");
                 _panel.Show();
                 SelectMod(_mod);
                 MenuTrace.Write("Deferred show: complete");
                 _panel.GetComponent<CanvasGroup>().alpha = 1;
             }
         }
+        UpdateRebindingLock();
         var visible = _panel != null && _panel.IsVisible;
         if (_wasVisible && !visible)
         {
@@ -84,9 +89,9 @@ public sealed partial class CompanionMenu : MonoBehaviour
             if (_returnTo != null) _returnFrame = Time.frameCount + 1;
         }
         _wasVisible = visible;
-        if (Application.isFocused && _search?.isFocused != true && !CompanionInput.Rebinding && Time.unscaledTime >= CompanionInput.ResumeAfter && MenuAction?.WasPressedThisFrame() == true)
+        if (Application.isFocused && (!visible || _search?.isFocused != true) && !CompanionInput.Rebinding && Time.unscaledTime >= CompanionInput.ResumeAfter && MenuAction?.WasPressedThisFrame() == true)
         {
-            if (visible) _panel!.Hide();
+            if (visible) CloseWindow();
             else Open();
         }
         if (!visible) return;
@@ -129,7 +134,12 @@ public sealed partial class CompanionMenu : MonoBehaviour
     }
 
     [HideFromIl2Cpp]
-    internal static bool IsCompanion(Component component) => component.GetComponentInParent<SettingsPanel>()?.name == RootName;
+    internal static bool IsCompanion(Component component)
+    {
+        for (var parent = component.transform; parent != null; parent = parent.parent)
+            if (parent.name == RootName) return true;
+        return false;
+    }
     [HideFromIl2Cpp]
     internal static void Click(Button button, Action callback)
     {
@@ -166,12 +176,66 @@ public sealed partial class CompanionMenu : MonoBehaviour
     }
 
     [HideFromIl2Cpp]
+    private void ResetWindow()
+    {
+        // Unity destroys the scene-owned window on reload, but this component and
+        // its managed lists survive. Never navigate or refresh those dead controls.
+        _pendingUiChange = null;
+        _refresh.Clear();
+        BindingLabel.Labels.Clear();
+        _modTabs.Clear(); _categoryTabs.Clear(); _modOrder.Clear(); _sections.Clear();
+        _mod = null; _section = null;
+        _hostPage = 0; _selectedSection = 0; _revision = -1;
+        _showFrame = -1; _returnFrame = -1; _wasVisible = false;
+        _returnTo = null; _lastSelection = null;
+        _search = null; _developerToggle = null; _inventoryRowArt = null;
+        _panel = null; _pages = null; _controls = null; _font = null;
+        _rebindConfirmations = Array.Empty<RebindConfirmationUI>();
+        _scrolls = Array.Empty<ScrollRect>();
+        _modBar = null!; _categoryBar = null!; _details = null!; _title = null!;
+        _toggleTemplate = null; _stepTemplate = null; _sliderTemplate = null;
+        _buttonTemplate = null; _bindingTemplate = null;
+        _categoryTemplate = null; _iconTemplate = null;
+        if (_templates != null) Object.Destroy(_templates);
+        _templates = null;
+        MenuTrace.Write("Window lifecycle: cleared previous controls and templates");
+    }
+
+    // Explicitly hide helpers from IL2CPP. Capturing local functions can compile
+    // into instance methods with by-ref managed closure parameters that crash injection.
+    [HideFromIl2Cpp]
+    private GameObject CopyTemplate(GameObject source)
+    {
+        MenuTrace.Write("Create: copying template " + source.name);
+        var copy = Object.Instantiate(source, _templates!.transform);
+        MenuTrace.Write("Create: copied template " + source.name);
+        return copy;
+    }
+
+    [HideFromIl2Cpp]
+    private T RequireControl<T>(string path) where T : Component
+    {
+        var component = _controls!.transform.Find(path)?.GetComponent<T>();
+        return component ?? throw new InvalidOperationException($"Native Controls/{path} has no {typeof(T).Name}.");
+    }
+
+    [HideFromIl2Cpp]
     private void Create()
     {
         MenuTrace.Write("Create: locating native settings source");
-        var source = Resources.FindObjectsOfTypeAll<SettingsPanel>().FirstOrDefault(s => s != null && s.gameObject.scene.IsValid() && s.name != RootName && s.togglesGroup?.toggles.Length == 4);
+        // Other mods can append native settings tabs (Unofficial Patch adds Mods).
+        // Identify the required native hierarchy rather than requiring exactly four tabs.
+        var source = Resources.FindObjectsOfTypeAll<SettingsPanel>().FirstOrDefault(s =>
+            s != null && s.gameObject.scene.IsValid() && s.name != RootName &&
+            s.togglesGroup != null && s.togglesGroup.toggles.Length >= 4 &&
+            s.transform.Find("FrameWrapper/GameplaySettings/MainSettings/Scrollview") != null &&
+            s.GetComponentInChildren<ControlsSettingsUI>(true) != null);
         if (source == null) throw new InvalidOperationException("Native settings window is unavailable.");
+        ResetWindow();
         var staging = new GameObject("ModCompanion.Templates"); staging.SetActive(false);
+        // Menu UI can outlive the gameplay scene. Its inactive clone sources must
+        // survive too, or opening a mod after travel dereferences destroyed templates.
+        Object.DontDestroyOnLoad(staging);
         GameObject? root = null;
         try
         {
@@ -179,43 +243,49 @@ public sealed partial class CompanionMenu : MonoBehaviour
             MenuTrace.Write($"Create: cloning source {source.name}");
             root = Object.Instantiate(source.gameObject, staging.transform); root.SetActive(false); root.name = RootName;
             MenuTrace.Write("Create: clone returned; locating native controllers");
-            _panel = root.GetComponent<SettingsPanel>();
+            // The inactive clone supplies serialized artwork and rebinding references.
+            // Remove its settings controller before Awake/Start can subscribe to events.
+            var inheritedSettings = root.GetComponent<SettingsPanel>();
+            _pages = inheritedSettings.togglesGroup;
+            var fadeTime = inheritedSettings.fadeTime;
+            var rememberSelection = inheritedSettings.rememberLastSelected;
+            // These buttons target SettingsPanel's apply/discard flow, which our
+            // autosaved settings never use. Keep the separate rebinding dialogs.
+            if (inheritedSettings.unappliedChangesPopup != null &&
+                inheritedSettings.unappliedChangesPopup.transform.IsChildOf(root.transform))
+                Object.DestroyImmediate(inheritedSettings.unappliedChangesPopup.gameObject);
+            Object.DestroyImmediate(inheritedSettings);
+            _panel = root.AddComponent<UIPanel>();
+            _panel.fadeTime = fadeTime ?? new OptionalFloat(0f, false);
+            _panel.rememberLastSelected = rememberSelection;
+            _pages.parentPanel = _panel;
+            _panel.OnShowEvent = null;
+            _panel.OnHideEvent = null;
+            _rebindConfirmations = root.GetComponentsInChildren<RebindConfirmationUI>(true);
             _controls = root.GetComponentInChildren<ControlsSettingsUI>(true);
             if (_controls == null) throw new InvalidOperationException("Native Controls section is unavailable.");
             _templates = staging;
-            GameObject Copy(GameObject obj)
-            {
-                MenuTrace.Write("Create: copying template " + obj.name);
-                var copy = Object.Instantiate(obj, staging.transform);
-                MenuTrace.Write("Create: copied template " + obj.name);
-                return copy;
-            }
-            _toggleTemplate = Copy(root.GetComponentsInChildren<ToggleSettingUI>(true).First(t => t.name == "P_DisableHeadBob").gameObject);
-            _stepTemplate = Copy(root.GetComponentInChildren<ResolutionSettingUI>(true).gameObject);
-            _sliderTemplate = Copy(root.GetComponentsInChildren<SliderSettingUI>(true).First(s => s.name == "P_MouseSensitivity").gameObject);
+            _toggleTemplate = CopyTemplate(root.GetComponentsInChildren<ToggleSettingUI>(true).First(t => t.name == "P_DisableHeadBob").gameObject);
+            _stepTemplate = CopyTemplate(root.GetComponentInChildren<ResolutionSettingUI>(true).gameObject);
+            _sliderTemplate = CopyTemplate(root.GetComponentsInChildren<SliderSettingUI>(true).First(s => s.name == "P_MouseSensitivity").gameObject);
             // Native SettingsTabPanel caches are not available on an inactive clone.
             // Resolve the serialized hierarchy instead of dereferencing applyButton.
             MenuTrace.Write("Create: resolving Controls hierarchy references");
-            T RequireControl<T>(string path) where T : Component
-            {
-                var component = _controls.transform.Find(path)?.GetComponent<T>();
-                return component ?? throw new InvalidOperationException($"Native Controls/{path} has no {typeof(T).Name}.");
-            }
             _controls.applyButton = RequireControl<Button>("ButtonsWrapper/Apply");
             _controls.resetButton = RequireControl<Button>("ButtonsWrapper/Reset");
             _controls.restoreDefaultsButton = RequireControl<Button>("ButtonsWrapper/Restore");
             _controls.scroll = RequireControl<ScrollRect>("Scrollview");
             _controls.rebindOverlay = RequireControl<UIPanel>("RebindOverlay");
             _controls.controls = new Il2CppSystem.Collections.Generic.List<InputRebindUI>();
-            _buttonTemplate = Copy(_controls.applyButton.gameObject);
-            _bindingTemplate = Copy(_controls.GetComponentsInChildren<InputRebindUI>(true).First(r => r.name == "Inventory").gameObject);
+            _buttonTemplate = CopyTemplate(_controls.applyButton.gameObject);
+            _bindingTemplate = CopyTemplate(_controls.GetComponentsInChildren<InputRebindUI>(true).First(r => r.name == "Inventory").gameObject);
             Clear(_controls.scroll.content);
             ConfigureLayout(_controls.scroll.content);
             _controls.scroll.content.GetComponent<VerticalLayoutGroup>().spacing = 24;
             _font = _toggleTemplate.GetComponentInChildren<TMP_Text>(true);
-            _categoryTemplate = Copy(_panel.togglesGroup.toggles[0].gameObject);
-            var scrollTemplate = Copy(root.transform.Find("FrameWrapper/GameplaySettings/MainSettings/Scrollview").gameObject);
-            var controller = _panel.togglesGroup;
+            _categoryTemplate = CopyTemplate(_pages!.toggles[0].gameObject);
+            var scrollTemplate = CopyTemplate(root.transform.Find("FrameWrapper/GameplaySettings/MainSettings/Scrollview").gameObject);
+            var controller = _pages!;
             var oldPanels = controller.panels.ToArray();
             var newPanels = new UISubPanel[4];
             _scrolls = new ScrollRect[4];
@@ -249,6 +319,12 @@ public sealed partial class CompanionMenu : MonoBehaviour
                 newPanels[i] = page; _scrolls[i] = scroll; scrollObject.SetActive(true);
             }
             MenuTrace.Write("Create: replacing tab controller arrays");
+            // Keep the clone's tab and page arrays in sync. Added tabs belong to
+            // the original settings window, not to Companion's four internal hosts.
+            var oldToggles = controller.toggles.ToArray();
+            controller.toggles = oldToggles.Take(4).ToArray();
+            foreach (var toggle in oldToggles.Skip(4))
+                if (toggle != null) Object.DestroyImmediate(toggle.gameObject);
             controller.panels = newPanels;
             controller._currentlyShownPanel = null!;
             controller._currentlyOnToggle = 0;
@@ -267,8 +343,6 @@ public sealed partial class CompanionMenu : MonoBehaviour
                     Object.DestroyImmediate(page.gameObject);
                 }
             MenuTrace.Write("Create: configuring retained Controls section");
-            _panel.settingsTabPanels = new Il2CppSystem.Collections.Generic.List<SettingsTabPanel>();
-            _panel.settingsTabPanels.Add(_controls);
             _controls.transform.Find("ButtonsWrapper")?.gameObject.SetActive(false);
             // Prevent the original native restore/apply actions from touching game configuration.
             foreach (var button in new[] { _controls.applyButton, _controls.resetButton, _controls.restoreDefaultsButton })
@@ -283,7 +357,7 @@ public sealed partial class CompanionMenu : MonoBehaviour
             var title = root.transform.Find("FrameWrapper/P_Element_TitleFrame/Title");
             foreach (var localized in title.GetComponents<LocalizedStaticUILabel>()) Object.DestroyImmediate(localized);
             title.GetComponent<TMP_Text>().text = "Mod Companion";
-            Click(root.transform.Find("FrameWrapper/P_Element_CloseBtn/CloseBtn").GetComponent<Button>(), () => _panel.Hide());
+            Click(root.transform.Find("FrameWrapper/P_Element_CloseBtn/CloseBtn").GetComponent<Button>(), CloseWindow);
             MenuTrace.Write("Create: removing inherited canvas managers");
             foreach (var manager in root.GetComponentsInChildren<CanvasBehaviourManager>(true)) Object.DestroyImmediate(manager);
             foreach (var canvas in root.GetComponentsInChildren<NestedCanvas>(true)) Object.DestroyImmediate(canvas);
@@ -298,13 +372,15 @@ public sealed partial class CompanionMenu : MonoBehaviour
             _revision = SettingsRegistry.Revision;
             MenuTrace.Write("Create: restoring presentation");
             RestorePresentation(root);
+            if (root.GetComponentInChildren<SettingsPanel>(true) != null)
+                throw new InvalidOperationException("Companion must not retain a native SettingsPanel controller.");
             root.transform.SetParent(source.transform.parent, false);
             MenuTrace.Write("Create: activating root and native Awake callbacks");
             root.SetActive(true);
             MenuTrace.Write("Create: root activated; hiding initial panel");
             _panel.Hide();
             MenuTrace.Write("Create: complete");
-            Plugin.Logger.LogInfo("Mod Companion native settings window created, including Controls and rebinding panels.");
+            Plugin.Logger.LogInfo("Mod Companion independent window created, including native Controls and rebinding panels.");
         }
         catch (Exception exception)
         {
@@ -562,7 +638,8 @@ public sealed partial class CompanionMenu : MonoBehaviour
         foreach (var mod in SettingsRegistry.RegisteredMods) if (mod.IsDirty) mod.Save();
         if (_panel != null) Object.Destroy(_panel.gameObject);
         if (_templates != null && !_constructionFailed) Object.Destroy(_templates);
-        foreach (var icon in _icons.Values) { Object.Destroy(icon.texture); Object.Destroy(icon); }
+        foreach (var icon in _icons.Values)
+            if (icon != null) { if (icon.texture != null) Object.Destroy(icon.texture); Object.Destroy(icon); }
         BindingLabel.Labels.Clear(); Instance = null;
     }
 }
