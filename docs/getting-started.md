@@ -2,7 +2,7 @@
 
 Images may be PNG/JPG bytes embedded in the mod DLL, or optional local files; Companion preserves their aspect ratio. Omitting the image uses initials.
 
-Reference `Nivalis.ModCompanion.dll` (do not bundle another copy) and declare a BepInEx dependency so the companion loads first:
+Reference `Nivalis.ModCompanion.dll` and declare a BepInEx dependency so the companion loads first:
 
 ```csharp
 using BepInEx;
@@ -143,7 +143,11 @@ Per-setting `Hint` text appears directly below its input, in smaller muted type.
 
 ## Project reference
 
-Add a reference to the Companion DLL with `Private="false"`. Distribute your own DLL and declare Mod Companion as a separate requirement; do not ship another copy.
+Add a reference to the Companion DLL with `Private="false"`. You can declare
+Companion as a separate requirement or bundle its DLL at the shared
+`BepInEx/plugins/Nivalis.ModCompanion.dll` path. Never add a second copy in a mod
+subfolder. Keep bundled versions and checksums current, and preserve a newer
+shared DLL when installing an older package.
 
 ```xml
 <Reference
