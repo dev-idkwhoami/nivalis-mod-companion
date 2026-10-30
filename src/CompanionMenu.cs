@@ -59,6 +59,8 @@ public sealed partial class CompanionMenu : MonoBehaviour
         if (Time.unscaledTime >= _nextSave)
         {
             _nextSave = Time.unscaledTime + 1;
+            if (Plugin.LoadedPluginAssemblies != null)
+                SettingsRegistry.CompletePendingRegistrations(Plugin.LoadedPluginAssemblies);
             foreach (var mod in SettingsRegistry.RegisteredMods)
                 if (mod.IsDirty) mod.Save();
         }

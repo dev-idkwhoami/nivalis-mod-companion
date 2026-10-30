@@ -12,11 +12,15 @@ public sealed class Plugin : BasePlugin
 {
     internal static BepInEx.Configuration.ConfigEntry<bool> DeveloperModeSetting = null!;
     internal static ManualLogSource Logger = null!;
+    internal static HashSet<System.Reflection.Assembly>? LoadedPluginAssemblies;
     public override void Load()
     {
         Logger = Log;
         MenuTrace.Write("=== Mod Companion compact binding rows build 7 loaded ===");
         SettingsRegistry.Report = message => Log.LogWarning(message);
+        IL2CPPChainloader.Instance.Finished += () =>
+            LoadedPluginAssemblies = IL2CPPChainloader.Instance.Plugins.Values
+                .Where(info => info.Instance != null).Select(info => info.Instance.GetType().Assembly).ToHashSet();
         var configPath = Path.Combine(Paths.ConfigPath, "Mod Companion.cfg");
         // Preserve existing settings; an explicitly named file takes precedence.
         if (!File.Exists(configPath) && File.Exists(Config.ConfigFilePath))

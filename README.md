@@ -2,7 +2,7 @@
 
 A shared settings menu and public configuration API for **Nivalis Nights** mods, built on the game's native UI and BepInEx 6 Unity IL2CPP.
 
-**Version: 1.0.2.**
+**Version: 1.0.4.**
 
 Companion's own settings are stored in `BepInEx/config/Mod Companion.cfg`.
 The old `local.nivalis.modcompanion.cfg` is moved automatically on startup if the

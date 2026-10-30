@@ -3,6 +3,8 @@ using NivalisMods.ModCompanion.Api;
 
 var root = Path.Combine(Path.GetTempPath(), "mod-companion-checks-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
+Directory.CreateDirectory(Path.Combine(root, "TestGame_Data"));
+BepInEx.Paths.SetExecutablePath(Path.Combine(root, "TestGame.exe"), Path.Combine(root, "BepInEx"));
 SettingsRegistry.ConfigRoot = root;
 var checks = 0;
 void Check(bool value, string message) { if (!value) throw new Exception(message); checks++; }
@@ -141,6 +143,58 @@ try
     Check(!failing.Save() && failing.IsDirty && failing.SaveError != null, "Save failure lost dirty state.");
     Directory.Delete(failing.ConfigPath);
     Check(failing.Save() && failing.SaveError == null, "Save did not recover after failure.");
+    // A real BepInEx ConfigFile preserves unbound entries unless Companion
+    // deliberately prunes them after the owner's registration has completed.
+    var obsoletePath = Path.Combine(root, "retired.cfg");
+    File.WriteAllText(obsoletePath, "[Features]\nFastReviews = true\nKeep = false\nLater = 9\n[Controls]\nInspect.Keyboard = <Keyboard>/f4\nInspect.Gamepad = <Gamepad>/buttonWest\n");
+    var retired = SettingsRegistry.Register("tests.retired", new ModMetadata("Retired", "Author", "2"), "retired.cfg");
+    var retiredFeatures = retired.Category("Features", "Features");
+    var keep = retiredFeatures.Toggle("Keep", "Keep", true);
+    keep.Value = true; // An automatic save midway through registration.
+    Check(File.ReadAllText(obsoletePath).Contains("Later = 9"), "Registration-time save dropped a later setting.");
+    var later = retiredFeatures.Stepper("Later", "Later", 1, 0, 20);
+    var keptInput = retired.Controls.AddInput("Inspect", "Inspect", "", "");
+    Check(later.Value == 9 && keptInput.Keyboard!.Value == "<Keyboard>/f4", "Later registration lost saved values.");
+    retired.Save();
+    Check(File.ReadAllText(obsoletePath).Contains("FastReviews"), "Cleanup ran before plugin loading completed.");
+    SettingsRegistry.CompletePendingRegistrations(new HashSet<System.Reflection.Assembly>());
+    Check(File.ReadAllText(obsoletePath).Contains("FastReviews"), "Failed/unloaded plugin configuration was pruned.");
+    retired.CompleteRegistration();
+    var cleanText = File.ReadAllText(obsoletePath);
+    Check(!cleanText.Contains("FastReviews") && cleanText.Contains("Later = 9") && cleanText.Contains("Keep = true"), "Obsolete setting was not removed or live values changed.");
+    Check(cleanText.Contains("Inspect.Keyboard = <Keyboard>/f4") && cleanText.Contains("Inspect.Gamepad = <Gamepad>/buttonWest"), "Cleanup removed keyboard/controller bindings.");
+    var persisted = new ConfigFile(obsoletePath, false) { SaveOnConfigSet = false };
+    Check(persisted.Bind("Features", "FastReviews", false).Value == false, "Removed value survived on disk.");
+    File.AppendAllText(obsoletePath, "\n[Old]\nUnknown = keep-no-more\n");
+    retired.Reload();
+    Check(!File.ReadAllText(obsoletePath).Contains("keep-no-more") && later.Value == 9, "Reload did not prune obsolete entries while retaining current values.");
+    retired.CompleteRegistration();
+    Check(File.ReadAllText(obsoletePath) == cleanText, "Repeated completion changed saved values.");
+    File.AppendAllText(existingFile.ConfigFilePath, "\n[Private]\nNotExposed = preserve-me\n");
+    existingFile.Reload();
+    other.CompleteRegistration(); other.Save(); other.Reload();
+    Check(File.ReadAllText(existingFile.ConfigFilePath).Contains("NotExposed = preserve-me"), "Externally owned config lost an unexposed setting.");
+    var noSettingsPath = Path.Combine(root, "no-settings.cfg");
+    File.WriteAllText(noSettingsPath, "[Old]\nOnlyRemoved = true\n");
+    var noSettings = SettingsRegistry.Register("tests.no-settings", new ModMetadata("No settings", "Author", "2"), "no-settings.cfg");
+    noSettings.CompleteRegistration();
+    Check(!File.ReadAllText(noSettingsPath).Contains("OnlyRemoved"), "Removing the last setting did not clean the owned config.");
+    var failurePath = Path.Combine(root, "prune-failure.cfg");
+    File.WriteAllText(failurePath, "[Old]\nRetired = 42\n");
+    var failure = SettingsRegistry.Register("tests.prune-failure", new ModMetadata("Prune failure", "Author", "2"), "prune-failure.cfg");
+    failure.Category("Live", "Live").Toggle("Enabled", "Enabled", true);
+    File.Delete(failurePath); Directory.CreateDirectory(failurePath);
+    failure.CompleteRegistration();
+    Check(failure.IsDirty && failure.SaveError != null, "Cleanup write failure was not retained for retry.");
+    var recovered = failure.Category("Old", "Old").Stepper("Retired", "Recovered", 0, 0, 100);
+    Check(recovered.Value == 42, "Cleanup failure discarded the orphaned in-memory value.");
+    Directory.Delete(failurePath);
+    Check(failure.Save() && failure.SaveError == null, "Cleanup retry did not recover.");
+    var pendingPath = Path.Combine(root, "pending.cfg");
+    File.WriteAllText(pendingPath, "[Old]\nRetired = true\n");
+    var pending = SettingsRegistry.Register("tests.pending", new ModMetadata("Pending", "Author", "2"), "pending.cfg");
+    SettingsRegistry.CompletePendingRegistrations(new HashSet<System.Reflection.Assembly> { typeof(SettingsRegistry).Assembly });
+    Check(!File.ReadAllText(pendingPath).Contains("Retired"), "Central lifecycle did not finalize a successful registration.");
     Console.WriteLine($"PASS: {checks} configuration checks.");
 }
 finally { Directory.Delete(root, true); }

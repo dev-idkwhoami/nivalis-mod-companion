@@ -1,5 +1,7 @@
 using BepInEx;
 using BepInEx.Configuration;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace NivalisMods.ModCompanion.Api;
 
@@ -10,7 +12,7 @@ public sealed record ModMetadata(string Name, string Author, string Version, str
 public static class SettingsRegistry
 {
     public const string PluginId = "local.nivalis.modcompanion";
-    public const string PluginVersion = "1.0.3";
+    public const string PluginVersion = "1.0.4";
     private static readonly List<ModRegistration> Mods = new();
     public static IReadOnlyList<ModRegistration> RegisteredMods => Mods.AsReadOnly();
     internal static string ConfigRoot = Paths.ConfigPath;
@@ -23,6 +25,7 @@ public static class SettingsRegistry
         internal set { if (_developerMode == value) return; _developerMode = value; Revision++; }
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public static ModRegistration Register(string id, ModMetadata metadata, string? configPath = null)
     {
         ValidateIdentity(id, metadata);
@@ -38,16 +41,17 @@ public static class SettingsRegistry
             throw new ArgumentException("Another registration already owns this configuration file.");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var file = new ConfigFile(path, false) { SaveOnConfigSet = false };
-        return Add(id, metadata, file, true);
+        return Add(id, metadata, file, true, Assembly.GetCallingAssembly());
     }
 
     /// <summary>Expose existing entries without changing ownership or SaveOnConfigSet.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public static ModRegistration Register(string id, ModMetadata metadata, ConfigFile config)
     {
         ValidateIdentity(id, metadata);
         if (Mods.Any(m => string.Equals(m.Config.ConfigFilePath, config.ConfigFilePath, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException("Another registration already owns this configuration file.");
-        return Add(id, metadata, config, false);
+        return Add(id, metadata, config, false, Assembly.GetCallingAssembly());
     }
 
     private static void ValidateIdentity(string id, ModMetadata metadata)
@@ -66,9 +70,9 @@ public static class SettingsRegistry
         if (Mods.Any(m => m.Id == id)) throw new ArgumentException($"Mod '{id}' is already registered.");
     }
 
-    private static ModRegistration Add(string id, ModMetadata metadata, ConfigFile config, bool owned)
+    private static ModRegistration Add(string id, ModMetadata metadata, ConfigFile config, bool owned, Assembly caller)
     {
-        var mod = new ModRegistration(id, metadata, config, owned);
+        var mod = new ModRegistration(id, metadata, config, owned, caller);
         Mods.Add(mod);
         Revision++;
         return mod;
@@ -79,6 +83,14 @@ public static class SettingsRegistry
         try { callback(); }
         catch (Exception e) { Report($"Settings callback failed: {e}"); }
     }
+
+    // Called on the main thread after plugin loading, also covering registrations
+    // made later in a synchronous callback. Failed plugins keep their old keys.
+    internal static void CompletePendingRegistrations(ISet<Assembly> loadedAssemblies)
+    {
+        foreach (var mod in Mods.ToArray())
+            if (loadedAssemblies.Contains(mod.RegistrationAssembly)) mod.CompleteRegistration();
+    }
 }
 
 public sealed class ModRegistration
@@ -87,6 +99,8 @@ public sealed class ModRegistration
     private readonly Dictionary<string, SettingDefinition> _settings = new(StringComparer.Ordinal);
     internal ConfigFile Config { get; }
     internal bool OwnsConfig { get; }
+    internal Assembly RegistrationAssembly { get; }
+    private bool _registrationComplete;
     private bool _reloading;
     internal DateTime ChangedAt { get; private set; }
     public string Id { get; }
@@ -111,9 +125,10 @@ public sealed class ModRegistration
     public string? SaveError { get; private set; }
     public IReadOnlyList<SettingsCategory> Categories => _categories.AsReadOnly();
 
-    internal ModRegistration(string id, ModMetadata metadata, ConfigFile config, bool owned)
+    internal ModRegistration(string id, ModMetadata metadata, ConfigFile config, bool owned, Assembly caller)
     {
         Id = id; Metadata = metadata; Config = config; OwnsConfig = owned;
+        RegistrationAssembly = caller;
         Controls = new ControlsSection(this); Developer = new DeveloperSection(this);
         config.SettingChanged += (_, _) => { MarkDirty(); if (!_reloading) Save(); };
     }
@@ -152,9 +167,24 @@ public sealed class ModRegistration
 
     internal void MarkDirty() { IsDirty = true; ChangedAt = DateTime.UtcNow; }
 
+    internal void CompleteRegistration()
+    {
+        if (_registrationComplete) return;
+        _registrationComplete = true;
+        if (OwnsConfig && (IsDirty || File.Exists(ConfigPath)))
+        {
+            MarkDirty();
+            Save();
+        }
+    }
+
     public bool Save()
     {
-        try { Config.Save(); IsDirty = false; SaveError = null; return true; }
+        try
+        {
+            ConfigCleanup.Save(Config, OwnsConfig && _registrationComplete);
+            IsDirty = false; SaveError = null; return true;
+        }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             if (SaveError != e.Message) SettingsRegistry.Report($"Cannot save {Id}: {e.Message}");

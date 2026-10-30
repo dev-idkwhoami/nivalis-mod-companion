@@ -11,6 +11,26 @@
 
 Companion-owned button bindings use a separate input asset. Keyboard/mouse and gamepad paths are persisted as `<Key>.Keyboard` and `<Key>.Gamepad` entries in the mod's config. A narrowly scoped resolver patch makes these actions available to the native binding rows. They are not inserted into the game's action asset or native save packet. Native conflict confirmation is retained; conflict detection between two companion-owned actions has not been verified.
 
+## Removed settings
+
+Since 1.0.4, files created through `Register(id, metadata[, relativePath])`
+automatically discard keys that the mod no longer binds. Register all settings
+synchronously during plugin `Load`. The first settings-service save after the
+chainloader finishes loading plugins removes unbound entries; later saves and
+explicit reloads do the same. Saves during registration preserve values that
+have not been bound yet. This also handles a mod removing its last setting.
+
+Cleanup only runs for registrations made by successfully loaded plugin assemblies.
+Register directly from the plugin assembly; registration delegated to a separate
+helper assembly is left unpruned. Current values and keyboard/gamepad bindings
+are preserved. A failed save retains the removed values in memory and remains
+pending for retry. If BepInEx's internal orphan storage changes, Companion logs
+that cleanup is unavailable and saves without pruning.
+
+An existing `ConfigFile` passed to `Register` keeps all unexposed/unbound entries:
+Companion does not own that file's schema. Configs belonging to absent mods and
+other files in a mod's folder are not scanned or changed.
+
 ## Existing configuration
 
 Use `SettingsRegistry.Register(id, metadata, existingConfigFile)` and `BindToggle`, `BindStepper`, or `BindChoice` to wrap existing `ConfigEntry` instances. Existing callbacks and file ownership remain unchanged. All exposed entries for a registration must belong to that same ConfigFile. For example:
